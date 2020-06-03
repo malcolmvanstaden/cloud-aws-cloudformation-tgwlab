@@ -1,0 +1,1436 @@
+#==============================================================================
+#                               TRANSIT GATEWAY LAB
+#
+# AUTHOR:     https://malcolm.cloud | malcolmvs@gmail.com
+#
+#------------------------------------------------------------------------------
+# NOTES:
+#  Create a basic lab environment for transit gateway: 3 x VPCs + TGW
+#
+#------------------------------------------------------------------------------
+# DATE:       VER:  CHANGE:
+#------------------------------------------------------------------------------
+# 2020-05-30  5     Initial version
+#
+#==============================================================================
+AWSTemplateFormatVersion: 2010-09-09
+Description: VPC
+
+
+#------------------------------------------------------------------------------
+# METADATA - TO ORGANISE INPUT GROUPS
+#------------------------------------------------------------------------------
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "VPC 1"
+        Parameters:
+            - VPC1Name
+            - VPC1octet
+
+      - Label:
+          default: "VPC 2"
+        Parameters:
+            - VPC2Name
+            - VPC2octet
+
+      - Label:
+          default: "VPC 3"
+        Parameters:
+            - VPC3Name
+            - VPC3octet
+
+      - Label:
+          default: "Transit Gateway Options"
+        Parameters:
+            - TGWDefaultRouteTableAssociation
+            - TGWDefaultRouteTablePropagation
+
+      - Label:
+          default: "Bastion Hosts"
+        Parameters:
+            - DeployBastionHost
+            - KeyName
+            - ManagementIP
+
+
+#------------------------------------------------------------------------------
+# INPUT PARAMETERS
+#------------------------------------------------------------------------------
+Parameters:
+  VPC1Name:
+    Description: 1st VPC Name. UPPERCASE with no spaces, "-VPC" will be appended on the end.
+    Type: String
+    MinLength: 2
+    Default: 'TGWLAB-MERCURY'
+  VPC2Name:
+    Description: 2nd VPC Name. UPPERCASE with no spaces, "-VPC" will be appended on the end.
+    Type: String
+    MinLength: 2
+    Default: 'TGWLAB-VENUS'
+  VPC3Name:
+    Description: 3rd VPC Name. UPPERCASE with no spaces, "-VPC" will be appended on the end.
+    Type: String
+    MinLength: 2
+    Default: 'TGWLAB-EARTH'        
+  VPC1octet:
+    Description: 1st VPC CIDR. First two octets of CIDR. e.g. 10.1 or 10.2 etc...
+    Type: String
+    MinLength: 3
+    Default: '10.101'
+  VPC2octet:
+    Description: 2nd VPC CIDR. First two octets of CIDR. e.g. 10.1 or 10.2 etc...
+    Type: String
+    MinLength: 3
+    Default: '10.102'
+  VPC3octet:
+    Description: 3rd VPC CIDR. First two octets of CIDR. e.g. 10.1 or 10.2 etc...
+    Type: String
+    MinLength: 3
+    Default: '10.103'        
+  ManagementIP:
+    Description: Management IP address in CIDR notation. e.g. 1.2.3.4/32. WARNING - default is open to the world!
+    Type: String
+    MinLength: 9
+    Default: '0.0.0.0/0' 
+  DeployBastionHost:
+    Description: Deploy a Bastion host in each VPC?
+    Type: String
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  KeyName:
+    Description: Select a KeyPair
+    Type: AWS::EC2::KeyPair::KeyName
+  TGWDefaultRouteTableAssociation:
+    Description: Default route table association
+    Type: String
+    Default: "enable"
+    AllowedValues:
+      - "disable"
+      - "enable"
+  TGWDefaultRouteTablePropagation:
+    Description: Default route table propagation
+    Type: String
+    Default: "enable"
+    AllowedValues:
+      - "disable"
+      - "enable"       
+
+
+#------------------------------------------------------------------------------
+# CONDITIONS
+#------------------------------------------------------------------------------
+Conditions:
+  CreateBastionServer: !Equals [ !Ref DeployBastionHost, "Yes" ]
+
+#------------------------------------------------------------------------------
+# MAPPINGS
+#------------------------------------------------------------------------------
+Mappings:
+  #----------------------------------------------------------------------------
+  # AMIs FOR AWS LINUX - 2020-04
+  #----------------------------------------------------------------------------
+  RegionMapAMI:
+    us-east-1:
+      AWSLinux2: ami-0323c3dd2da7fb37d
+    us-east-2:
+      AWSLinux2: ami-0f7919c33c90f5b58
+    us-west-1:
+      AWSLinux2: ami-06fcc1f0bc2c8943f
+    us-west-2:
+      AWSLinux2:  ami-0d6621c01e8c2de2c
+    ap-south-1:
+      AWSLinux2:  ami-0470e33cd681b2476
+    ap-northeast-2:
+      AWSLinux2: ami-01288945bd24ed49a
+    ap-southeast-1:
+      AWSLinux2: ami-0ec225b5e01ccb706
+    ap-southeast-2:
+      AWSLinux2: ami-0970010f37c4f9c8d
+    ap-northeast-1:
+      AWSLinux2: ami-0f310fced6141e627
+    eu-central-1:
+      AWSLinux2: ami-076431be05aaf8080
+    eu-west-1:
+      AWSLinux2: ami-06ce3edf0cff21f07
+    eu-west-2:
+      AWSLinux2: ami-01a6e31ac994bbc09
+    eu-west-3:
+      AWSLinux2: ami-00077e3fed5089981
+    eu-north-1:
+      AWSLinux2: ami-0b7a46b4bd694e8a6
+    sa-east-1:
+      AWSLinux2: ami-003449ffb2605a74c
+
+
+#------------------------------------------------------------------------------
+# RESOURCES
+#------------------------------------------------------------------------------
+Resources:
+  #----------------------------------------------------------------------------
+  # VPC
+  #----------------------------------------------------------------------------
+  #--- VPC1 -------------------------------------------------------------------
+  VPC1vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .0.0/16
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - VPC
+
+  #--- VPC2 -------------------------------------------------------------------
+  VPC2vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .0.0/16
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - VPC
+
+  #--- VPC3 -------------------------------------------------------------------
+  VPC3vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .0.0/16
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - VPC              
+
+  #----------------------------------------------------------------------------
+  # Subnets
+  #----------------------------------------------------------------------------
+  #--- VPC1: Public -----------------------------------------------------------
+  VPC1SubnetPublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .11.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - a
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - PUBLIC-A
+  VPC1SubnetPublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .12.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - b
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - PUBLIC-B
+  VPC1SubnetPublicC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .13.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - c
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - PUBLIC-C
+
+  #--- VPC2: Public -----------------------------------------------------------
+  VPC2SubnetPublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .11.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - a
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - PUBLIC-A
+  VPC2SubnetPublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .12.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - b
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - PUBLIC-B
+  VPC2SubnetPublicC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .13.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - c
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - PUBLIC-C              
+
+  #--- VPC3: Public -----------------------------------------------------------
+  VPC3SubnetPublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .11.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - a
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - PUBLIC-A
+  VPC3SubnetPublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .12.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - b
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - PUBLIC-B
+  VPC3SubnetPublicC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .13.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - c
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - PUBLIC-C
+
+  #--- VPC1: Private ----------------------------------------------------------
+  VPC1SubnetPrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .21.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - a
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - PRIVATE-A
+  VPC1SubnetPrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .22.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - b
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - PRIVATE-B
+  VPC1SubnetPrivateC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .23.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - c
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - PRIVATE-C
+
+  #--- VPC2: Private ----------------------------------------------------------
+  VPC2SubnetPrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .21.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - a
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - PRIVATE-A
+  VPC2SubnetPrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .22.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - b
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - PRIVATE-B
+  VPC2SubnetPrivateC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .23.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - c
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - PRIVATE-C
+
+  #--- VPC3: Private ----------------------------------------------------------
+  VPC3SubnetPrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .21.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - a
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - PRIVATE-A
+  VPC3SubnetPrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .22.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - b
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - PRIVATE-B
+  VPC3SubnetPrivateC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .23.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - c
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - PRIVATE-C              
+
+  #--- VPC1: Database ---------------------------------------------------------
+  VPC1SubnetDatabaseA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .31.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - a
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - DATABASE-A
+  VPC1SubnetDatabaseB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .32.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - b
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - DATABASE-B
+  VPC1SubnetDatabaseC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .33.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - c
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - DATABASE-C
+
+  #--- VPC2: Database ---------------------------------------------------------
+  VPC2SubnetDatabaseA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .31.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - a
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - DATABASE-A
+  VPC2SubnetDatabaseB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .32.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - b
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - DATABASE-B
+  VPC2SubnetDatabaseC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .33.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - c
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - DATABASE-C
+
+  #--- VPC3: Database ---------------------------------------------------------
+  VPC3SubnetDatabaseA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .31.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - a
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - DATABASE-A
+  VPC3SubnetDatabaseB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .32.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - b
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - DATABASE-B
+  VPC3SubnetDatabaseC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      CidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .33.0/24
+      AvailabilityZone: !Join
+        - ''
+        - - !Ref AWS::Region
+          - c
+      Tags:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - DATABASE-C                        
+
+  #----------------------------------------------------------------------------
+  # Internet Gateway
+  #----------------------------------------------------------------------------
+  #--- VPC1: Create Internet Gateway ------------------------------------------
+  VPC1InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - IGW
+
+  #--- VPC2: Create Internet Gateway ------------------------------------------
+  VPC2InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - IGW
+
+  #--- VPC3: Create Internet Gateway ------------------------------------------
+  VPC3InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - IGW              
+
+  #--- VPC1: Attach Internet Gateway ------------------------------------------
+  VPC1AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      InternetGatewayId:
+        Ref: VPC1InternetGateway
+
+  #--- VPC2: Attach Internet Gateway ------------------------------------------
+  VPC2AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      InternetGatewayId:
+        Ref: VPC2InternetGateway
+
+  #--- VPC3: Attach Internet Gateway ------------------------------------------
+  VPC3AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      InternetGatewayId:
+        Ref: VPC3InternetGateway          
+
+  #----------------------------------------------------------------------------
+  # Routing Tables
+  #----------------------------------------------------------------------------
+  #--- VPC1: Create Public Subnet Routing Table -------------------------------
+  VPC1IGWRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC1vpc
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - RT-IGW
+
+  #--- VPC2: Create Public Subnet Routing Table -------------------------------
+  VPC2IGWRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC2vpc
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - RT-IGW
+
+  #--- VPC3: Create Public Subnet Routing Table -------------------------------
+  VPC3IGWRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC3vpc
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - RT-IGW              
+
+  #--- VPC1: Create Public Subnet Routes --------------------------------------
+  VPC1IGWRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPC1InternetGateway
+    Properties:
+      RouteTableId:
+        Ref: VPC1IGWRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: VPC1InternetGateway
+
+  #--- VPC2: Create Public Subnet Routes --------------------------------------
+  VPC2IGWRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPC2InternetGateway
+    Properties:
+      RouteTableId:
+        Ref: VPC2IGWRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: VPC2InternetGateway  
+
+  #--- VPC3: Create Public Subnet Routes --------------------------------------
+  VPC3IGWRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPC3InternetGateway
+    Properties:
+      RouteTableId:
+        Ref: VPC3IGWRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: VPC3InternetGateway   
+
+  #--- VPC1: Create TGW Routes --------------------------------------
+  VPC1TGWRouteToVPC2:
+    Type: AWS::EC2::Route
+    DependsOn: 
+      - TGW1
+      - VPC1TGWAttchment
+      - VPC2TGWAttchment
+      - VPC3TGWAttchment
+      - VPC1IGWRouteTable
+    Properties:
+      RouteTableId:
+        Ref: VPC1IGWRouteTable
+      DestinationCidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .0.0/16
+      TransitGatewayId:
+        Ref: TGW1  
+
+  VPC1TGWRouteToVPC3:
+    Type: AWS::EC2::Route
+    DependsOn: 
+      - TGW1
+      - VPC1TGWAttchment
+      - VPC2TGWAttchment
+      - VPC3TGWAttchment
+      - VPC1IGWRouteTable
+    Properties:
+      RouteTableId:
+        Ref: VPC1IGWRouteTable
+      DestinationCidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .0.0/16
+      TransitGatewayId:
+        Ref: TGW1      
+
+  #--- VPC2: Create TGW Routes --------------------------------------
+  VPC2TGWRouteToVPC1:
+    Type: AWS::EC2::Route
+    DependsOn: 
+      - TGW1
+      - VPC1TGWAttchment
+      - VPC2TGWAttchment
+      - VPC3TGWAttchment
+      - VPC2IGWRouteTable
+    Properties:
+      RouteTableId:
+        Ref: VPC2IGWRouteTable
+      DestinationCidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .0.0/16
+      TransitGatewayId:
+        Ref: TGW1  
+
+  VPC2TGWRouteToVPC3:
+    Type: AWS::EC2::Route
+    DependsOn: 
+      - TGW1
+      - VPC1TGWAttchment
+      - VPC2TGWAttchment
+      - VPC3TGWAttchment
+      - VPC2IGWRouteTable
+    Properties:
+      RouteTableId:
+        Ref: VPC2IGWRouteTable
+      DestinationCidrBlock: !Join
+        - ''
+        - - !Ref VPC3octet
+          - .0.0/16
+      TransitGatewayId:
+        Ref: TGW1     
+
+  #--- VPC3: Create TGW Routes --------------------------------------
+  VPC3TGWRouteToVPC1:
+    Type: AWS::EC2::Route
+    DependsOn: 
+      - TGW1
+      - VPC1TGWAttchment
+      - VPC2TGWAttchment
+      - VPC3TGWAttchment
+      - VPC3IGWRouteTable
+    Properties:
+      RouteTableId:
+        Ref: VPC3IGWRouteTable
+      DestinationCidrBlock: !Join
+        - ''
+        - - !Ref VPC1octet
+          - .0.0/16
+      TransitGatewayId:
+        Ref: TGW1  
+
+  VPC3TGWRouteToVPC2:
+    Type: AWS::EC2::Route
+    DependsOn: 
+      - TGW1
+      - VPC1TGWAttchment
+      - VPC2TGWAttchment
+      - VPC3TGWAttchment
+      - VPC3IGWRouteTable
+    Properties:
+      RouteTableId:
+        Ref: VPC3IGWRouteTable
+      DestinationCidrBlock: !Join
+        - ''
+        - - !Ref VPC2octet
+          - .0.0/16
+      TransitGatewayId:
+        Ref: TGW1                          
+
+  #--- VPC1: Associate Public Subnets with IGW Route Table --------------------
+  VPC1IGWSubnetPublicARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: VPC1SubnetPublicA
+      RouteTableId:
+        Ref: VPC1IGWRouteTable
+  VPC1IGWSubnetPublicBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: VPC1SubnetPublicB
+      RouteTableId:
+        Ref: VPC1IGWRouteTable
+  VPC1IGWSubnetPublicCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: VPC1SubnetPublicC
+      RouteTableId:
+        Ref: VPC1IGWRouteTable
+
+  #--- VPC2: Associate Public Subnets with IGW Route Table --------------------
+  VPC2IGWSubnetPublicARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: VPC2SubnetPublicA
+      RouteTableId:
+        Ref: VPC2IGWRouteTable
+  VPC2IGWSubnetPublicBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: VPC2SubnetPublicB
+      RouteTableId:
+        Ref: VPC2IGWRouteTable
+  VPC2IGWSubnetPublicCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: VPC2SubnetPublicC
+      RouteTableId:
+        Ref: VPC2IGWRouteTable  
+
+  #--- VPC3: Associate Public Subnets with IGW Route Table --------------------
+  VPC3IGWSubnetPublicARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: VPC3SubnetPublicA
+      RouteTableId:
+        Ref: VPC3IGWRouteTable
+  VPC3IGWSubnetPublicBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: VPC3SubnetPublicB
+      RouteTableId:
+        Ref: VPC3IGWRouteTable
+  VPC3IGWSubnetPublicCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: VPC3SubnetPublicC
+      RouteTableId:
+        Ref: VPC3IGWRouteTable              
+
+  #----------------------------------------------------------------------------
+  # Security Groups
+  #----------------------------------------------------------------------------
+  #--- VPC1: Management -------------------------------------------------------
+  VPC1SecurityGroupManagement:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Management Traffic
+      VpcId:
+        Ref: VPC1vpc
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: !Ref ManagementIP
+      - IpProtocol: -1
+        CidrIp: !Join
+          - ''
+          - - !Ref VPC1octet
+            - .0.0/16
+      - IpProtocol: -1
+        CidrIp: !Join
+          - ''
+          - - !Ref VPC2octet
+            - .0.0/16  
+      - IpProtocol: -1
+        CidrIp: !Join
+          - ''
+          - - !Ref VPC3octet
+            - .0.0/16                            
+      Tags:
+      - Key: Name
+        Value: !Join
+          - '-'
+          - - !Ref VPC1Name
+            - SG-Management
+
+  #--- VPC2: Management -------------------------------------------------------
+  VPC2SecurityGroupManagement:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Management Traffic
+      VpcId:
+        Ref: VPC2vpc
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: !Ref ManagementIP
+      - IpProtocol: -1
+        CidrIp: !Join
+          - ''
+          - - !Ref VPC1octet
+            - .0.0/16
+      - IpProtocol: -1
+        CidrIp: !Join
+          - ''
+          - - !Ref VPC2octet
+            - .0.0/16  
+      - IpProtocol: -1
+        CidrIp: !Join
+          - ''
+          - - !Ref VPC3octet
+            - .0.0/16 
+      Tags:
+      - Key: Name
+        Value: !Join
+          - '-'
+          - - !Ref VPC2Name
+            - SG-Management    
+
+  #--- VPC3: Management -------------------------------------------------------
+  VPC3SecurityGroupManagement:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Management Traffic
+      VpcId:
+        Ref: VPC3vpc
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: !Ref ManagementIP
+      - IpProtocol: -1
+        CidrIp: !Join
+          - ''
+          - - !Ref VPC1octet
+            - .0.0/16
+      - IpProtocol: -1
+        CidrIp: !Join
+          - ''
+          - - !Ref VPC2octet
+            - .0.0/16  
+      - IpProtocol: -1
+        CidrIp: !Join
+          - ''
+          - - !Ref VPC3octet
+            - .0.0/16 
+      Tags:
+      - Key: Name
+        Value: !Join
+          - '-'
+          - - !Ref VPC3Name
+            - SG-Management                    
+
+  #----------------------------------------------------------------------------
+  # BASTION
+  #----------------------------------------------------------------------------
+  #--- VPC1: BASTION ----------------------------------------------------------
+  VPC1BastionHost:
+    Type: 'AWS::EC2::Instance'
+    Condition: CreateBastionServer
+    Properties:
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap
+        - RegionMapAMI
+        - !Ref 'AWS::Region'
+        - AWSLinux2
+      InstanceType: 't3.nano'
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp2
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          SubnetId: !Ref VPC1SubnetPublicA
+          GroupSet:
+            - !Ref VPC1SecurityGroupManagement     
+      UserData:
+          Fn::Base64: !Sub |
+            #!/bin/sh
+            sudo yum -y update               
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - BASTION
+    DependsOn:
+        - VPC1SubnetPublicA
+        - VPC1SecurityGroupManagement
+
+  #--- VPC2: BASTION ----------------------------------------------------------
+  VPC2BastionHost:
+    Type: 'AWS::EC2::Instance'
+    Condition: CreateBastionServer
+    Properties:
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap
+        - RegionMapAMI
+        - !Ref 'AWS::Region'
+        - AWSLinux2
+      InstanceType: 't3.nano'
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp2
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          SubnetId: !Ref VPC2SubnetPublicB
+          GroupSet:
+            - !Ref VPC2SecurityGroupManagement     
+      UserData:
+          Fn::Base64: !Sub |
+            #!/bin/sh
+            sudo yum -y update               
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - BASTION
+    DependsOn:
+        - VPC2SubnetPublicA
+        - VPC2SecurityGroupManagement 
+
+  #--- VPC3: BASTION ----------------------------------------------------------
+  VPC3BastionHost:
+    Type: 'AWS::EC2::Instance'
+    Condition: CreateBastionServer
+    Properties:
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap
+        - RegionMapAMI
+        - !Ref 'AWS::Region'
+        - AWSLinux2
+      InstanceType: 't3.nano'
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp2
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          SubnetId: !Ref VPC3SubnetPublicC
+          GroupSet:
+            - !Ref VPC3SecurityGroupManagement     
+      UserData:
+          Fn::Base64: !Sub |
+            #!/bin/sh
+            sudo yum -y update               
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - BASTION
+    DependsOn:
+        - VPC3SubnetPublicA
+        - VPC3SecurityGroupManagement               
+
+  #----------------------------------------------------------------------------
+  # TRANSIT GATEWAY
+  #----------------------------------------------------------------------------
+  #--- CREATE THE TRANSIT GATEWAY ---------------------------------------------
+  TGW1:
+    Type: AWS::EC2::TransitGateway
+    Properties: 
+      AmazonSideAsn: 64512
+      AutoAcceptSharedAttachments: 'disable'
+      DefaultRouteTableAssociation: !Ref TGWDefaultRouteTableAssociation
+      DefaultRouteTablePropagation: !Ref TGWDefaultRouteTablePropagation
+      Description: 'Transit Gateway Lab'
+      DnsSupport: 'enable'
+      VpnEcmpSupport: 'enable'
+      Tags: 
+        - Key: Name
+          Value: 'TGWLAB-TGW1'
+  
+  #--- VPC1: TGW ATTACHMENT ---------------------------------------------------
+  VPC1TGWAttchment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: 
+      VpcId: 
+        Ref: VPC1vpc 
+      SubnetIds: 
+          - Ref: VPC1SubnetPublicA
+          - Ref: VPC1SubnetPublicB
+          - Ref: VPC1SubnetPublicC
+      TransitGatewayId:
+        Ref: TGW1
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC1Name
+              - TGW-ATTACHMENT        
+    DependsOn:
+      - TGW1
+      - VPC1vpc
+      - VPC1SubnetPublicA
+      - VPC1SubnetPublicB
+      - VPC1SubnetPublicC
+
+  #--- VPC2: TGW ATTACHMENT ---------------------------------------------------
+  VPC2TGWAttchment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: 
+      VpcId: 
+        Ref: VPC2vpc 
+      SubnetIds: 
+          - Ref: VPC2SubnetPublicA
+          - Ref: VPC2SubnetPublicB
+          - Ref: VPC2SubnetPublicC
+      TransitGatewayId:
+        Ref: TGW1
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC2Name
+              - TGW-ATTACHMENT        
+    DependsOn:
+      - TGW1
+      - VPC2vpc
+      - VPC2SubnetPublicA
+      - VPC2SubnetPublicB
+      - VPC2SubnetPublicC
+
+  #--- VPC3: TGW ATTACHMENT ---------------------------------------------------
+  VPC3TGWAttchment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: 
+      VpcId: 
+        Ref: VPC3vpc 
+      SubnetIds: 
+          - Ref: VPC3SubnetPublicA
+          - Ref: VPC3SubnetPublicB
+          - Ref: VPC3SubnetPublicC
+      TransitGatewayId:
+        Ref: TGW1
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref VPC3Name
+              - TGW-ATTACHMENT        
+    DependsOn:
+      - TGW1
+      - VPC3vpc
+      - VPC3SubnetPublicA
+      - VPC3SubnetPublicB
+      - VPC3SubnetPublicC          
+         
+#===============================================================================
+# OUTPUTS
+#===============================================================================
+Outputs:
+  VPC1BastionServerIP:
+    Condition: CreateBastionServer
+    Description: VPC 1 - Bastion server Public IP address
+    Value: !GetAtt
+      - VPC1BastionHost
+      - PublicIp              
+  VPC2BastionServerIP:
+    Condition: CreateBastionServer
+    Description: VPC 2 - Bastion server Public IP address
+    Value: !GetAtt
+      - VPC2BastionHost
+      - PublicIp  
+  VPC3BastionServerIP:
+    Condition: CreateBastionServer
+    Description: VPC 3 - Bastion server Public IP address
+    Value: !GetAtt
+      - VPC3BastionHost
+      - PublicIp        
